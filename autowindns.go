@@ -15,6 +15,7 @@ import (
 
 func init() {
 	caddy.RegisterModule(AutoWinDNS{})
+	caddy.RegisterGlobalOption("auto_windns", parseCaddyfileGlobalOption)
 }
 
 type AutoWinDNS struct {
@@ -140,44 +141,53 @@ func (a *AutoWinDNS) createCNAMERecord(alias string) error {
 	return nil
 }
 
-func (a *AutoWinDNS) UnmarshalCaddyfile(disp *caddyfile.Dispenser) error {
-	for disp.Next() {
-		for disp.NextBlock(0) {
-			switch disp.Val() {
+func (a *AutoWinDNS) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	return parseCaddyfileGlobalOption(d, a)
+}
+
+func parseCaddyfileGlobalOption(d *caddyfile.Dispenser, a interface{}) (interface{}, error) {
+	if a == nil {
+		a = new(AutoWinDNS)
+	}
+
+	app := a.(*AutoWinDNS)
+	for d.Next() {
+		for d.NextBlock(0) {
+			switch d.Val() {
 			case "server":
-				if !disp.Args(&a.Server) {
-					return disp.ArgErr()
+				if !d.Args(&app.Server) {
+					return nil, d.ArgErr()
 				}
 			case "username":
-				if !disp.Args(&a.Username) {
-					return disp.ArgErr()
+				if !d.Args(&app.Username) {
+					return nil, d.ArgErr()
 				}
 			case "password":
-				if !disp.Args(&a.Password) {
-					return disp.ArgErr()
+				if !d.Args(&app.Password) {
+					return nil, d.ArgErr()
 				}
 			case "zone":
-				if !disp.Args(&a.Zone) {
-					return disp.ArgErr()
+				if !d.Args(&app.Zone) {
+					return nil, d.ArgErr()
 				}
 			case "target":
-				if !disp.Args(&a.Target) {
-					return disp.ArgErr()
+				if !d.Args(&app.Target) {
+					return nil, d.ArgErr()
 				}
 			case "check_interval":
 				var interval string
-				if !disp.Args(&interval) {
-					return disp.ArgErr()
+				if !d.Args(&interval) {
+					return nil, d.ArgErr()
 				}
 				dur, err := time.ParseDuration(interval)
 				if err != nil {
-					return disp.Errf("invalid duration: %v", err)
+					return nil, d.Errf("invalid duration: %v", err)
 				}
-				a.CheckInterval = caddy.Duration(dur)
+				app.CheckInterval = caddy.Duration(dur)
 			}
 		}
 	}
-	return nil
+	return app, nil
 }
 
 var (
