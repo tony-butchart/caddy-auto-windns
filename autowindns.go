@@ -26,7 +26,7 @@ type AutoWinDNS struct {
 	CheckInterval caddy.Duration `json:"check_interval,omitempty"`
 	logger        *zap.Logger
 	mutex         sync.Mutex
-	config        *caddy.Config
+	ctx           caddy.Context
 }
 
 func (AutoWinDNS) CaddyModule() caddy.ModuleInfo {
@@ -38,7 +38,7 @@ func (AutoWinDNS) CaddyModule() caddy.ModuleInfo {
 
 func (a *AutoWinDNS) Provision(ctx caddy.Context) error {
 	a.logger = ctx.Logger(a)
-	a.config = ctx.Config()
+	a.ctx = ctx
 	if a.CheckInterval == 0 {
 		a.CheckInterval = caddy.Duration(1 * time.Hour)
 	}
@@ -62,7 +62,7 @@ func (a *AutoWinDNS) run() {
 		select {
 		case <-ticker.C:
 			continue
-		case <-caddy.AppContext(a.config).Done():
+		case <-a.ctx.Done():
 			return
 		}
 	}
@@ -87,11 +87,11 @@ func (a *AutoWinDNS) updateCNAMERecords() {
 }
 
 func (a *AutoWinDNS) getHostnamesFromConfig() ([]string, error) {
-	app, err := caddy.GetModule("http").Instance()
+	appModule, err := a.ctx.App("http")
 	if err != nil {
 		return nil, err
 	}
-	httpApp := app.(*caddyhttp.App)
+	httpApp := appModule.(*caddyhttp.App)
 	var hostnames []string
 	for _, srv := range httpApp.Servers {
 		for _, route := range srv.Routes {
@@ -169,9 +169,11 @@ func (a *AutoWinDNS) UnmarshalCaddyfile(disp *caddyfile.Dispenser) error {
 				if !disp.Args(&interval) {
 					return disp.ArgErr()
 				}
-				if err := a.CheckInterval.UnmarshalCaddyfile(disp.NewFromArgs([]string{interval})); err != nil {
-					return err
+				dur, err := time.ParseDuration(interval)
+				if err != nil {
+					return disp.Errf("invalid duration: %v", err)
 				}
+				a.CheckInterval = caddy.Duration(dur)
 			}
 		}
 	}
