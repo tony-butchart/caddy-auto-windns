@@ -8,6 +8,7 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
@@ -15,7 +16,7 @@ import (
 
 func init() {
 	caddy.RegisterModule(AutoWinDNS{})
-	caddy.RegisterGlobalOption("auto_windns", func() interface{} { return new(AutoWinDNS) })
+	httpcaddyfile.RegisterGlobalOption("auto_windns", parseAutoWinDNS)
 }
 
 type AutoWinDNS struct {
@@ -29,6 +30,15 @@ type AutoWinDNS struct {
 	mutex          sync.Mutex
 	ctx            caddy.Context
 	createdRecords map[string]bool
+}
+
+func parseAutoWinDNS(d *caddyfile.Dispenser, _ interface{}) (interface{}, error) {
+	app := new(AutoWinDNS)
+	err := app.UnmarshalCaddyfile(d)
+	if err != nil {
+		return nil, err
+	}
+	return app, nil
 }
 
 func (AutoWinDNS) CaddyModule() caddy.ModuleInfo {
@@ -50,7 +60,7 @@ func (a *AutoWinDNS) Provision(ctx caddy.Context) error {
 
 func (a *AutoWinDNS) Start() error {
 	go func() {
-		for range a.ctx.Context().Done() {
+		for range a.ctx.Done() {
 			a.updateCNAMERecords()
 		}
 	}()
@@ -164,11 +174,48 @@ func (a *AutoWinDNS) executeSSHCommand(cmd string) error {
 }
 
 func (a *AutoWinDNS) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
-	app, err := parseCaddyfileGlobalOption(d)
-	if err != nil {
-		return err
+	for d.Next() {
+		for d.NextBlock(0) {
+			switch d.Val() {
+			case "server":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				a.Server = d.Val()
+			case "username":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				a.Username = d.Val()
+			case "password":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				a.Password = d.Val()
+			case "zone":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				a.Zone = d.Val()
+			case "target":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				a.Target = d.Val()
+			case "check_interval":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				dur, err := time.ParseDuration(d.Val())
+				if err != nil {
+					return d.Errf("invalid duration: %v", err)
+				}
+				a.CheckInterval = caddy.Duration(dur)
+			default:
+				return d.Errf("unknown subdirective %s", d.Val())
+			}
+		}
 	}
-	*a = *(app.(*AutoWinDNS))
 
 	// Validate required fields
 	if a.Server == "" {
