@@ -15,19 +15,20 @@ import (
 
 func init() {
 	caddy.RegisterModule(AutoWinDNS{})
-	caddy.RegisterGlobalOption("auto_windns", parseCaddyfileGlobalOption)
+	caddy.RegisterGlobalOption("auto_windns", func() interface{} { return new(AutoWinDNS) })
 }
 
 type AutoWinDNS struct {
-	Server        string         `json:"server,omitempty"`
-	Username      string         `json:"username,omitempty"`
-	Password      string         `json:"password,omitempty"`
-	Zone          string         `json:"zone,omitempty"`
-	Target        string         `json:"target,omitempty"`
-	CheckInterval caddy.Duration `json:"check_interval,omitempty"`
-	logger        *zap.Logger
-	mutex         sync.Mutex
-	ctx           caddy.Context
+	Server         string         `json:"server,omitempty"`
+	Username       string         `json:"username,omitempty"`
+	Password       string         `json:"password,omitempty"`
+	Zone           string         `json:"zone,omitempty"`
+	Target         string         `json:"target,omitempty"`
+	CheckInterval  caddy.Duration `json:"check_interval,omitempty"`
+	logger         *zap.Logger
+	mutex          sync.Mutex
+	ctx            caddy.Context
+	createdRecords map[string]bool
 }
 
 func (AutoWinDNS) CaddyModule() caddy.ModuleInfo {
@@ -43,30 +44,21 @@ func (a *AutoWinDNS) Provision(ctx caddy.Context) error {
 	if a.CheckInterval == 0 {
 		a.CheckInterval = caddy.Duration(1 * time.Hour)
 	}
+	a.createdRecords = make(map[string]bool)
 	return nil
 }
 
 func (a *AutoWinDNS) Start() error {
-	go a.run()
+	go func() {
+		for range a.ctx.Context().Done() {
+			a.updateCNAMERecords()
+		}
+	}()
 	return nil
 }
 
 func (a *AutoWinDNS) Stop() error {
 	return nil
-}
-
-func (a *AutoWinDNS) run() {
-	ticker := time.NewTicker(time.Duration(a.CheckInterval))
-	defer ticker.Stop()
-	for {
-		a.updateCNAMERecords()
-		select {
-		case <-ticker.C:
-			continue
-		case <-a.ctx.Done():
-			return
-		}
-	}
 }
 
 func (a *AutoWinDNS) updateCNAMERecords() {
@@ -81,9 +73,22 @@ func (a *AutoWinDNS) updateCNAMERecords() {
 
 	for _, hostname := range hostnames {
 		alias := strings.Split(hostname, ".")[0]
-		if err := a.createCNAMERecord(alias); err != nil {
-			a.logger.Error("failed to create CNAME record", zap.String("hostname", hostname), zap.Error(err))
+		if a.createdRecords[alias] {
+			a.logger.Debug("CNAME record already exists", zap.String("alias", alias))
+			continue
 		}
+		err := a.createCNAMERecord(alias)
+		if err != nil {
+			a.logger.Error("failed to create CNAME record",
+				zap.String("hostname", hostname),
+				zap.String("alias", alias),
+				zap.Error(err))
+			continue
+		}
+		a.createdRecords[alias] = true
+		a.logger.Info("successfully created CNAME record",
+			zap.String("hostname", hostname),
+			zap.String("alias", alias))
 	}
 }
 
@@ -110,6 +115,23 @@ func (a *AutoWinDNS) getHostnamesFromConfig() ([]string, error) {
 
 func (a *AutoWinDNS) createCNAMERecord(alias string) error {
 	cmd := fmt.Sprintf("Add-DnsServerResourceRecordCName -Name %s -ZoneName %s -HostNameAlias %s", alias, a.Zone, a.Target)
+
+	maxRetries := 3
+	for retry := 0; retry < maxRetries; retry++ {
+		err := a.executeSSHCommand(cmd)
+		if err == nil {
+			return nil
+		}
+		a.logger.Warn("Failed to create CNAME record, retrying",
+			zap.String("alias", alias),
+			zap.Int("retry", retry+1),
+			zap.Error(err))
+		time.Sleep(time.Second * time.Duration(retry+1))
+	}
+	return fmt.Errorf("failed to create CNAME record after %d retries", maxRetries)
+}
+
+func (a *AutoWinDNS) executeSSHCommand(cmd string) error {
 	config := &ssh.ClientConfig{
 		User: a.Username,
 		Auth: []ssh.AuthMethod{
@@ -142,48 +164,73 @@ func (a *AutoWinDNS) createCNAMERecord(alias string) error {
 }
 
 func (a *AutoWinDNS) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
-	return parseCaddyfileGlobalOption(d, a)
-}
+	app, err := parseCaddyfileGlobalOption(d)
+	if err != nil {
+		return err
+	}
+	*a = *(app.(*AutoWinDNS))
 
-func parseCaddyfileGlobalOption(d *caddyfile.Dispenser, a interface{}) (interface{}, error) {
-	if a == nil {
-		a = new(AutoWinDNS)
+	// Validate required fields
+	if a.Server == "" {
+		return d.Err("server is required")
+	}
+	if a.Username == "" {
+		return d.Err("username is required")
+	}
+	if a.Password == "" {
+		return d.Err("password is required")
+	}
+	if a.Zone == "" {
+		return d.Err("zone is required")
+	}
+	if a.Target == "" {
+		return d.Err("target is required")
 	}
 
-	app := a.(*AutoWinDNS)
+	return nil
+}
+
+func parseCaddyfileGlobalOption(d *caddyfile.Dispenser) (interface{}, error) {
+	app := new(AutoWinDNS)
 	for d.Next() {
 		for d.NextBlock(0) {
 			switch d.Val() {
 			case "server":
-				if !d.Args(&app.Server) {
+				if !d.NextArg() {
 					return nil, d.ArgErr()
 				}
+				app.Server = d.Val()
 			case "username":
-				if !d.Args(&app.Username) {
+				if !d.NextArg() {
 					return nil, d.ArgErr()
 				}
+				app.Username = d.Val()
 			case "password":
-				if !d.Args(&app.Password) {
+				if !d.NextArg() {
 					return nil, d.ArgErr()
 				}
+				app.Password = d.Val()
 			case "zone":
-				if !d.Args(&app.Zone) {
+				if !d.NextArg() {
 					return nil, d.ArgErr()
 				}
+				app.Zone = d.Val()
 			case "target":
-				if !d.Args(&app.Target) {
+				if !d.NextArg() {
 					return nil, d.ArgErr()
 				}
+				app.Target = d.Val()
 			case "check_interval":
-				var interval string
-				if !d.Args(&interval) {
+				if !d.NextArg() {
 					return nil, d.ArgErr()
 				}
-				dur, err := time.ParseDuration(interval)
+				dur, err := time.ParseDuration(d.Val())
 				if err != nil {
 					return nil, d.Errf("invalid duration: %v", err)
 				}
 				app.CheckInterval = caddy.Duration(dur)
+			default:
+				return nil, d.Errf("unknown subdirective %s", d.Val())
 			}
 		}
 	}
