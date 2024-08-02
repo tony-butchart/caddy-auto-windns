@@ -168,12 +168,12 @@ func (a *AutoWinDNS) createCNAMERecord(alias string) error {
 
 func (a *AutoWinDNS) updateCNAMERecord(alias, currentTarget string) error {
 	cmd := fmt.Sprintf(`
-Start-Transcript -Path "C:\temp\${datetime}.txt" -NoClobber
+Start-Transcript -Path "C:\temp\farts.txt" -NoClobber
 $OldObj = Get-DnsServerResourceRecord -Name %s -ZoneName %s -RRType CNAME
 $NewObj = [ciminstance]::new($OldObj)
 $NewObj.RecordData.HostNameAlias = "%s"
 Set-DnsServerResourceRecord -NewInputObject $NewObj -OldInputObject $OldObj -ZoneName %s -PassThru
-    `, alias, a.Zone, currentTarget, a.Zone)
+    `, alias, a.Zone, a.Target, a.Zone)
 	_, err := a.executeSSHCommand(cmd)
 	return err
 }
