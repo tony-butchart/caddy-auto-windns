@@ -85,22 +85,45 @@ func (a *AutoWinDNS) updateCNAMERecords() {
 
 	for _, hostname := range hostnames {
 		alias := strings.Split(hostname, ".")[0]
-		if a.createdRecords[alias] {
-			a.logger.Debug("CNAME record already exists", zap.String("alias", alias))
-			continue
-		}
-		err := a.createCNAMERecord(alias)
+		currentTarget, err := a.getCNAMERecord(alias)
 		if err != nil {
-			a.logger.Error("failed to create CNAME record",
-				zap.String("hostname", hostname),
+			a.logger.Error("failed to get current CNAME record",
 				zap.String("alias", alias),
 				zap.Error(err))
 			continue
 		}
-		a.createdRecords[alias] = true
-		a.logger.Info("successfully created CNAME record",
-			zap.String("hostname", hostname),
-			zap.String("alias", alias))
+
+		if currentTarget == "" {
+			err := a.createCNAMERecord(alias)
+			if err != nil {
+				a.logger.Error("failed to create CNAME record",
+					zap.String("hostname", hostname),
+					zap.String("alias", alias),
+					zap.Error(err))
+				continue
+			}
+			a.logger.Info("successfully created CNAME record",
+				zap.String("hostname", hostname),
+				zap.String("alias", alias))
+		} else if currentTarget != a.Target {
+			err := a.updateCNAMERecord(alias)
+			if err != nil {
+				a.logger.Error("failed to update CNAME record",
+					zap.String("hostname", hostname),
+					zap.String("alias", alias),
+					zap.Error(err))
+				continue
+			}
+			a.logger.Info("successfully updated CNAME record",
+				zap.String("hostname", hostname),
+				zap.String("alias", alias),
+				zap.String("old_target", currentTarget),
+				zap.String("new_target", a.Target))
+		} else {
+			a.logger.Debug("CNAME record already exists and is up to date",
+				zap.String("alias", alias),
+				zap.String("target", currentTarget))
+		}
 	}
 }
 
@@ -125,25 +148,31 @@ func (a *AutoWinDNS) getHostnamesFromConfig() ([]string, error) {
 	return hostnames, nil
 }
 
-func (a *AutoWinDNS) createCNAMERecord(alias string) error {
-	cmd := fmt.Sprintf("Add-DnsServerResourceRecordCName -Name %s -ZoneName %s -HostNameAlias %s", alias, a.Zone, a.Target)
-
-	maxRetries := 3
-	for retry := 0; retry < maxRetries; retry++ {
-		err := a.executeSSHCommand(cmd)
-		if err == nil {
-			return nil
+func (a *AutoWinDNS) getCNAMERecord(alias string) (string, error) {
+	cmd := fmt.Sprintf("Get-DnsServerResourceRecord -ZoneName %s -Name %s -RRType CNAME | Select-Object -ExpandProperty RecordData | Select-Object -ExpandProperty HostNameAlias", a.Zone, alias)
+	output, err := a.executeSSHCommand(cmd)
+	if err != nil {
+		if strings.Contains(err.Error(), "ObjectNotFound") {
+			return "", nil // Record doesn't exist
 		}
-		a.logger.Warn("Failed to create CNAME record, retrying",
-			zap.String("alias", alias),
-			zap.Int("retry", retry+1),
-			zap.Error(err))
-		time.Sleep(time.Second * time.Duration(retry+1))
+		return "", err
 	}
-	return fmt.Errorf("failed to create CNAME record after %d retries", maxRetries)
+	return strings.TrimSpace(output), nil
 }
 
-func (a *AutoWinDNS) executeSSHCommand(cmd string) error {
+func (a *AutoWinDNS) createCNAMERecord(alias string) error {
+	cmd := fmt.Sprintf("Add-DnsServerResourceRecordCName -Name %s -ZoneName %s -HostNameAlias %s", alias, a.Zone, a.Target)
+	_, err := a.executeSSHCommand(cmd)
+	return err
+}
+
+func (a *AutoWinDNS) updateCNAMERecord(alias string) error {
+	cmd := fmt.Sprintf("Set-DnsServerResourceRecordCName -Name %s -ZoneName %s -HostNameAlias %s", alias, a.Zone, a.Target)
+	_, err := a.executeSSHCommand(cmd)
+	return err
+}
+
+func (a *AutoWinDNS) executeSSHCommand(cmd string) (string, error) {
 	config := &ssh.ClientConfig{
 		User: a.Username,
 		Auth: []ssh.AuthMethod{
@@ -154,13 +183,13 @@ func (a *AutoWinDNS) executeSSHCommand(cmd string) error {
 
 	client, err := ssh.Dial("tcp", a.Server+":22", config)
 	if err != nil {
-		return fmt.Errorf("failed to dial SSH: %w", err)
+		return "", fmt.Errorf("failed to dial SSH: %w", err)
 	}
 	defer client.Close()
 
 	session, err := client.NewSession()
 	if err != nil {
-		return fmt.Errorf("failed to create SSH session: %w", err)
+		return "", fmt.Errorf("failed to create SSH session: %w", err)
 	}
 	defer session.Close()
 
@@ -169,10 +198,10 @@ func (a *AutoWinDNS) executeSSHCommand(cmd string) error {
 	session.Stderr = &stderr
 
 	if err := session.Run(cmd); err != nil {
-		return fmt.Errorf("failed to run command: %w, stderr: %s", err, stderr.String())
+		return "", fmt.Errorf("failed to run command: %w, stderr: %s", err, stderr.String())
 	}
 
-	return nil
+	return output.String(), nil
 }
 
 var (
