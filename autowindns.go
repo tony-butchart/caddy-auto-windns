@@ -7,18 +7,13 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
-	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
-	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
 
 func init() {
-	fmt.Println("Registering AutoWinDNS module")
 	caddy.RegisterModule(AutoWinDNS{})
-	fmt.Println("Registering AutoWinDNS global option")
-	httpcaddyfile.RegisterGlobalOption("auto_windns", parseAutoWinDNS)
 }
 
 type AutoWinDNS struct {
@@ -34,53 +29,38 @@ type AutoWinDNS struct {
 	createdRecords map[string]bool
 }
 
-func parseAutoWinDNS(d *caddyfile.Dispenser, _ interface{}) (interface{}, error) {
-	fmt.Println("Parsing AutoWinDNS configuration")
-	app := new(AutoWinDNS)
-	err := app.UnmarshalCaddyfile(d)
-	if err != nil {
-		fmt.Printf("Error unmarshalling Caddyfile: %v\n", err)
-		return nil, err
-	}
-	fmt.Println("AutoWinDNS configuration parsed successfully")
-	return app, nil
-}
-
 func (AutoWinDNS) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "auto-windns",
+		ID:  "autowindns",
 		New: func() caddy.Module { return new(AutoWinDNS) },
 	}
 }
 
 func (a *AutoWinDNS) Provision(ctx caddy.Context) error {
-	fmt.Println("Provisioning AutoWinDNS module")
 	a.logger = ctx.Logger(a)
 	a.ctx = ctx
+	a.logger.Info("AutoWinDNS module provisioned")
 	if a.CheckInterval == 0 {
 		a.CheckInterval = caddy.Duration(1 * time.Hour)
 	}
 	a.createdRecords = make(map[string]bool)
-	fmt.Printf("AutoWinDNS provisioned with check interval: %v\n", a.CheckInterval)
 	return nil
 }
 
 func (a *AutoWinDNS) Start() error {
-	fmt.Println("Starting AutoWinDNS module")
+	a.logger.Info("AutoWinDNS module started")
 	go func() {
 		ticker := time.NewTicker(time.Duration(a.CheckInterval))
 		defer ticker.Stop()
 
-		fmt.Println("Running initial CNAME record update")
+		// Run once immediately
 		a.updateCNAMERecords()
 
 		for {
 			select {
 			case <-ticker.C:
-				fmt.Println("Running periodic CNAME record update")
 				a.updateCNAMERecords()
 			case <-a.ctx.Done():
-				fmt.Println("AutoWinDNS module stopping")
 				return
 			}
 		}
@@ -93,6 +73,7 @@ func (a *AutoWinDNS) Stop() error {
 }
 
 func (a *AutoWinDNS) updateCNAMERecords() {
+	a.logger.Info("Updating CNAME records")
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
@@ -194,72 +175,7 @@ func (a *AutoWinDNS) executeSSHCommand(cmd string) error {
 	return nil
 }
 
-func (a *AutoWinDNS) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
-	for d.Next() {
-		for d.NextBlock(0) {
-			switch d.Val() {
-			case "server":
-				if !d.NextArg() {
-					return d.ArgErr()
-				}
-				a.Server = d.Val()
-			case "username":
-				if !d.NextArg() {
-					return d.ArgErr()
-				}
-				a.Username = d.Val()
-			case "password":
-				if !d.NextArg() {
-					return d.ArgErr()
-				}
-				a.Password = d.Val()
-			case "zone":
-				if !d.NextArg() {
-					return d.ArgErr()
-				}
-				a.Zone = d.Val()
-			case "target":
-				if !d.NextArg() {
-					return d.ArgErr()
-				}
-				a.Target = d.Val()
-			case "check_interval":
-				if !d.NextArg() {
-					return d.ArgErr()
-				}
-				dur, err := time.ParseDuration(d.Val())
-				if err != nil {
-					return d.Errf("invalid duration: %v", err)
-				}
-				a.CheckInterval = caddy.Duration(dur)
-			default:
-				return d.Errf("unknown subdirective %s", d.Val())
-			}
-		}
-	}
-
-	// Validate required fields
-	if a.Server == "" {
-		return d.Err("server is required")
-	}
-	if a.Username == "" {
-		return d.Err("username is required")
-	}
-	if a.Password == "" {
-		return d.Err("password is required")
-	}
-	if a.Zone == "" {
-		return d.Err("zone is required")
-	}
-	if a.Target == "" {
-		return d.Err("target is required")
-	}
-
-	return nil
-}
-
 var (
-	_ caddy.Provisioner     = (*AutoWinDNS)(nil)
-	_ caddy.App             = (*AutoWinDNS)(nil)
-	_ caddyfile.Unmarshaler = (*AutoWinDNS)(nil)
+	_ caddy.Provisioner = (*AutoWinDNS)(nil)
+	_ caddy.App         = (*AutoWinDNS)(nil)
 )
