@@ -237,53 +237,6 @@ func (a *AutoWinDNS) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	return nil
 }
 
-func parseCaddyfileGlobalOption(d *caddyfile.Dispenser) (interface{}, error) {
-	app := new(AutoWinDNS)
-	for d.Next() {
-		for d.NextBlock(0) {
-			switch d.Val() {
-			case "server":
-				if !d.NextArg() {
-					return nil, d.ArgErr()
-				}
-				app.Server = d.Val()
-			case "username":
-				if !d.NextArg() {
-					return nil, d.ArgErr()
-				}
-				app.Username = d.Val()
-			case "password":
-				if !d.NextArg() {
-					return nil, d.ArgErr()
-				}
-				app.Password = d.Val()
-			case "zone":
-				if !d.NextArg() {
-					return nil, d.ArgErr()
-				}
-				app.Zone = d.Val()
-			case "target":
-				if !d.NextArg() {
-					return nil, d.ArgErr()
-				}
-				app.Target = d.Val()
-			case "check_interval":
-				if !d.NextArg() {
-					return nil, d.ArgErr()
-				}
-				dur, err := time.ParseDuration(d.Val())
-				if err != nil {
-					return nil, d.Errf("invalid duration: %v", err)
-				}
-				app.CheckInterval = caddy.Duration(dur)
-			default:
-				return nil, d.Errf("unknown subdirective %s", d.Val())
-			}
-		}
-	}
-	return app, nil
-}
-
 var (
 	_ caddy.Provisioner     = (*AutoWinDNS)(nil)
 	_ caddy.App             = (*AutoWinDNS)(nil)
