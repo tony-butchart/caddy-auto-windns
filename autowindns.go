@@ -168,6 +168,7 @@ func (a *AutoWinDNS) createCNAMERecord(alias string) error {
 
 func (a *AutoWinDNS) updateCNAMERecord(alias, currentTarget string) error {
 	cmd := fmt.Sprintf(`
+Start-Transcript -Path "C:\temp\${datetime}.txt" -NoClobber
 $OldObj = Get-DnsServerResourceRecord -Name %s -ZoneName %s -RRType CNAME
 $NewObj = [ciminstance]::new($OldObj)
 $NewObj.RecordData.HostNameAlias = "%s"
