@@ -106,7 +106,7 @@ func (a *AutoWinDNS) updateCNAMERecords() {
 				zap.String("hostname", hostname),
 				zap.String("alias", alias))
 		} else if currentTarget != a.Target {
-			err := a.updateCNAMERecord(alias)
+			err := a.updateCNAMERecord(alias, currentTarget)
 			if err != nil {
 				a.logger.Error("failed to update CNAME record",
 					zap.String("hostname", hostname),
@@ -166,8 +166,13 @@ func (a *AutoWinDNS) createCNAMERecord(alias string) error {
 	return err
 }
 
-func (a *AutoWinDNS) updateCNAMERecord(alias string) error {
-	cmd := fmt.Sprintf("Set-DnsServerResourceRecordCName -Name %s -ZoneName %s -HostNameAlias %s", alias, a.Zone, a.Target)
+func (a *AutoWinDNS) updateCNAMERecord(alias, currentTarget string) error {
+	cmd := fmt.Sprintf(`
+$OldObj = Get-DnsServerResourceRecord -Name %s -ZoneName %s -RRType CNAME
+$NewObj = [ciminstance]::new($OldObj)
+$NewObj.RecordData.HostNameAlias = "%s."
+Set-DnsServerResourceRecord -NewInputObject $NewObj -OldInputObject $OldObj -ZoneName %s -PassThru
+    `, alias, a.Zone, currentTarget, a.Zone)
 	_, err := a.executeSSHCommand(cmd)
 	return err
 }
