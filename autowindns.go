@@ -15,7 +15,9 @@ import (
 )
 
 func init() {
+	fmt.Println("Registering AutoWinDNS module")
 	caddy.RegisterModule(AutoWinDNS{})
+	fmt.Println("Registering AutoWinDNS global option")
 	httpcaddyfile.RegisterGlobalOption("auto_windns", parseAutoWinDNS)
 }
 
@@ -33,11 +35,14 @@ type AutoWinDNS struct {
 }
 
 func parseAutoWinDNS(d *caddyfile.Dispenser, _ interface{}) (interface{}, error) {
+	fmt.Println("Parsing AutoWinDNS configuration")
 	app := new(AutoWinDNS)
 	err := app.UnmarshalCaddyfile(d)
 	if err != nil {
+		fmt.Printf("Error unmarshalling Caddyfile: %v\n", err)
 		return nil, err
 	}
+	fmt.Println("AutoWinDNS configuration parsed successfully")
 	return app, nil
 }
 
@@ -49,30 +54,33 @@ func (AutoWinDNS) CaddyModule() caddy.ModuleInfo {
 }
 
 func (a *AutoWinDNS) Provision(ctx caddy.Context) error {
+	fmt.Println("Provisioning AutoWinDNS module")
 	a.logger = ctx.Logger(a)
 	a.ctx = ctx
-	a.logger.Info("AutoWinDNS module provisioned")
 	if a.CheckInterval == 0 {
 		a.CheckInterval = caddy.Duration(1 * time.Hour)
 	}
 	a.createdRecords = make(map[string]bool)
+	fmt.Printf("AutoWinDNS provisioned with check interval: %v\n", a.CheckInterval)
 	return nil
 }
 
 func (a *AutoWinDNS) Start() error {
-	a.logger.Info("AutoWinDNS module started")
+	fmt.Println("Starting AutoWinDNS module")
 	go func() {
 		ticker := time.NewTicker(time.Duration(a.CheckInterval))
 		defer ticker.Stop()
 
-		// Run once immediately
+		fmt.Println("Running initial CNAME record update")
 		a.updateCNAMERecords()
 
 		for {
 			select {
 			case <-ticker.C:
+				fmt.Println("Running periodic CNAME record update")
 				a.updateCNAMERecords()
 			case <-a.ctx.Done():
+				fmt.Println("AutoWinDNS module stopping")
 				return
 			}
 		}
