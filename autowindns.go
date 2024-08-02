@@ -170,7 +170,7 @@ func (a *AutoWinDNS) updateCNAMERecord(alias, currentTarget string) error {
 	cmd := fmt.Sprintf(`
 $OldObj = Get-DnsServerResourceRecord -Name %s -ZoneName %s -RRType CNAME
 $NewObj = [ciminstance]::new($OldObj)
-$NewObj.RecordData.HostNameAlias = "%s."
+$NewObj.RecordData.HostNameAlias = "%s"
 Set-DnsServerResourceRecord -NewInputObject $NewObj -OldInputObject $OldObj -ZoneName %s -PassThru
     `, alias, a.Zone, currentTarget, a.Zone)
 	_, err := a.executeSSHCommand(cmd)
